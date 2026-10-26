@@ -1,0 +1,4 @@
+pico-sdk/
+pico/build/
+.DS_Store
+**/.DS_Store
