@@ -14,7 +14,7 @@ pico_sdk_init()
 add_executable(splatoon_procon
     src/main.c
     src/usb_descriptors.c
-    src/pro_con_protocol.c
+    src/hori_gamepad.c
     src/splatoon_ai.c
 )
 

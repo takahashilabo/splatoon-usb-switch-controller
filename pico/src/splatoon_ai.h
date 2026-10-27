@@ -1,6 +1,6 @@
 #pragma once
 
-#include "pro_con_protocol.h"
+#include "gamepad_state.h"
 
 // Reimplementation (for the Pico, in C) of the dummy-play state machine from
 // ../../pseude-splatoon-controller/core/human_splatoon_ai.py: weighted

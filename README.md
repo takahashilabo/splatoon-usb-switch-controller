@@ -1,9 +1,12 @@
 # splatoon-usb-switch-controller
 
-Raspberry Pi Pico firmware that impersonates a Nintendo Switch Pro Controller
-over USB, paired with a hardware USB switch that exclusively selects between
-the real Pro Controller and the Pico. The Switch only ever sees one device at
-a time, so there's no "player 2 gets ignored in single player" problem.
+**Status: working.** Raspberry Pi Pico firmware that impersonates a
+HORI-licensed Switch controller over USB, paired with a hardware USB switch
+that exclusively selects between the real Pro Controller and the Pico. The
+Switch only ever sees one device at a time, so there's no "player 2 gets
+ignored in single player" problem. Confirmed on a real console: the Pico
+shows up as Player 1 on the "Change Grip/Order" screen and its AI-driven
+dummy input moves the cursor.
 
 ## Why this exists
 
@@ -37,28 +40,71 @@ Controller over USB and streams AI-driven input.
 
 ## Status
 
-- Pico firmware enumerates correctly as a genuine Pro Controller (USB
-  descriptors, strings, VID/PID 057E:2009) and streams standard input
-  reports immediately on connect, matching empirically-probed behavior of a
-  real Pro Controller.
-- The `0x80`-series handshake replies were verified byte-for-byte against a
-  real Pro Controller (see `pico/src/pro_con_protocol.c` probing notes).
-- A real Nintendo Switch wired-controller test requires the official dock
-  in TV mode (the console's own USB-C port does not accept wired controller
-  input in handheld mode) — not yet confirmed working end-to-end on a real
-  console.
-- The hardware USB switch is currently a provisional jumper-wire mockup
-  (D+/D- manually moved between the real controller and the Pico, GND/VBUS
-  shared permanently); verified to correctly switch which device a USB host
-  sees. A real DPDT slide switch is the planned permanent replacement.
+**Confirmed working on a real Nintendo Switch, docked in TV mode:**
+
+- The Pico shows up as a controller on the "Change Grip/Order" screen
+  (Player 1), and the AI-driven dummy input visibly moves the cursor.
+- The hardware switch (a 6-pin/DPDT slide switch, D+/D- only — see below)
+  correctly toggles which device the Switch sees: real Pro Controller or
+  Pico.
+- Known quirk: switching back to the real Pro Controller doesn't always get
+  picked up immediately — pressing a button (e.g. A) or the controller's
+  sync/reset button is sometimes needed. Occasionally reconnects over
+  Bluetooth instead of wired in that moment (see the Bluetooth-fallback
+  note below).
+
+**How recognition was actually achieved** — this took most of the effort,
+and the path there is worth keeping on record:
+
+Early attempts emulated a *genuine* Nintendo Pro Controller (VID/PID
+057E:2009) with the full `0x80`-series handshake protocol. USB-descriptor
+level enumeration worked fine on a Mac (generic host) and the handshake
+replies were verified byte-for-byte against a real Pro Controller, but a
+real Nintendo Switch console always stalled after exactly one command
+(`0x80 05`) and went silent — no retries, no further commands — regardless
+of reply content, streaming timing, or device serial/MAC. That 0x80-series
+protocol is Nintendo's own and, it turns out, essentially undocumented for
+the *console's* side of a wired handshake (every reference implementation
+found — SDL, the Linux `hid-nintendo` driver, espp — is PC/host-side code
+that was never itself validated against a real console as the host).
+
+The fix was to stop emulating a genuine Pro Controller and instead emulate
+a **HORI-licensed controller** (Pokken Tournament DX Pro Pad, VID/PID
+0F0D:0092), which doesn't use Nintendo's proprietary handshake at all —
+just a plain 8-byte USB HID gamepad report, no report IDs, no init
+sequence. This is the same approach used by
+[celclow/SwitchControlLibrary](https://github.com/celclow/SwitchControlLibrary),
+an Arduino library with years of track record in the TAS/botting community
+against real consoles. Switching to it is what got the Pico recognized.
+
+## Hardware switch
+
+A 6-pin (DPDT) slide switch, wired to swap only D+/D- between "real
+controller" and "Pico." GND and VBUS are shared permanently across both
+sides (not switched) — simplest wiring that still gives the Switch
+electrical exclusivity on the data lines.
+
+One unresolved issue: a genuine Pro Controller has a "seamless Bluetooth
+handoff" feature — unplugging its USB data lines (even with VBUS still
+present, since it has its own battery) makes it try to fall back to
+Bluetooth, which can reintroduce a second simultaneously-connected
+controller. Tried and ruled out so far: de-pairing Bluetooth from the
+Switch's controller list, a full factory-reset of the controller's sync
+button, and weak pull-down "decoy host present" terminations on the
+disconnected D+/D- lines (RP2040 GPIO internal pull-downs) — none of these
+stopped the handoff. The planned fix is to run the real controller without
+its battery (USB bus power only) and switch VBUS too (needs a 3-pole/3PDT
+switch instead of the current 2-pole one) so it fully loses power, and
+therefore can't attempt Bluetooth, whenever it's deselected.
 
 ## Layout
 
-- `pico/src/pro_con_protocol.c` — Pro Controller USB protocol: handshake,
-  subcommand replies, SPI-read emulation, standard input report packing.
-- `pico/src/usb_descriptors.c` — USB device/configuration/HID report
-  descriptors and string descriptors, copied from a real controller
-  capture.
+- `pico/src/hori_gamepad.c` — HORI-pad USB report descriptor, VID/PID, and
+  the function that packs AI state into its 8-byte input report.
+- `pico/src/gamepad_state.h` — protocol-agnostic button/stick state shared
+  between the AI and whichever wire format is in use.
+- `pico/src/usb_descriptors.c` — USB device/configuration descriptors and
+  string descriptors.
 - `pico/src/splatoon_ai.c` — human-like dummy input generator (play-paint →
   hide → search → jump-shot state machine, finger inertia, noise), ported
   from the earlier Python prototype. Play styles: balanced, stealth,
